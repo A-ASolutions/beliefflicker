@@ -1,0 +1,738 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Belief Entrain – Theta→Gamma Peripheral Flicker</title>
+<style>
+  :root{
+    --ring-opacity: 0;           /* animated 0..1; multiplied by strength in JS */
+    --ring-contrast: 0.35;       /* 0..1 */
+    --hole: 18vmin;              /* centre hole radius */
+    --ring-start: calc(var(--hole) + 12vmin); /* where the bright ring begins */
+    --bg: #0e0f12;
+    --fg: #e9ecef;
+    --muted: #aab2bd;
+    --accent: #8dd3ff;
+    --card: #14161b;
+    --card-2: #191c22;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);font-family:Inter,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+  .app{position:relative;min-height:100vh;display:flex;align-items:center;justify-content:center;overflow:hidden}
+
+  /* Peripheral ring (never blocks clicks) */
+  .ring{
+    position:absolute;inset:0;pointer-events:none;z-index:1;
+    background:
+      radial-gradient(circle at 50% 50%,
+        transparent 0,
+        transparent var(--hole),                                      /* central hole (non-flicker) */
+        rgba(255,255,255,0) calc(var(--hole) + 0.1vmin),
+        rgba(255,255,255,calc(var(--ring-opacity)*var(--ring-contrast))) var(--ring-start),
+        rgba(255,255,255,calc(var(--ring-opacity)*var(--ring-contrast))) 100vmin,
+        rgba(255,255,255,0) 100.1vmin
+      );
+    mix-blend-mode:screen;
+  }
+  .grain{
+    position:absolute;inset:0;opacity:0.06;pointer-events:none;z-index:1;
+    background-image:url('data:image/svg+xml;utf8,\
+<svg xmlns="http://www.w3.org/2000/svg" width=\"140\" height=\"140\" viewBox=\"0 0 140 140\">\
+<filter id=\"n\"><feTurbulence type=\"fractalNoise\" baseFrequency=\"0.9\" numOctaves=\"1\"/></filter>\
+<rect width=\"100%\" height=\"100%\" filter=\"url(#n)\" opacity=\"0.7\"/>\
+</svg>');
+    background-size:140px 140px;
+    mix-blend-mode:soft-light;
+  }
+
+  /* Pre-session control panel */
+  .panel{
+    position:relative;z-index:10;width:min(900px,92vw);margin:auto;padding:20px;
+  }
+  .card{
+    background:linear-gradient(180deg,var(--card),var(--card-2));
+    border:1px solid #222630;border-radius:18px;box-shadow:0 10px 30px rgba(0,0,0,0.35);
+    padding:20px;
+  }
+  h1{margin:0 0 8px;font-weight:700;font-size:clamp(22px,3.2vw,30px);letter-spacing:0.2px}
+  .muted{color:var(--muted);font-size:0.95rem}
+  .grid{display:grid;gap:14px;grid-template-columns:1fr}
+  @media(min-width:900px){.grid{grid-template-columns:1.25fr 1fr}}
+  label{font-size:0.9rem;color:#c9d2dc}
+  input[type="text"], select, input[type="number"], textarea{
+    width:100%;padding:12px 14px;border-radius:12px;border:1px solid #2a2f38;background:#101219;color:var(--fg);outline:none
+  }
+  textarea{min-height:74px}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  .hint{font-size:0.85rem;color:#9fb0bf}
+  .btn{
+    appearance:none;border:1px solid #2a2f38;background:#101219;color:#e9ecef;
+    padding:10px 14px;border-radius:12px;cursor:pointer;font-weight:600
+  }
+  .btn.primary{background:var(--accent);color:#0b2533;border-color:#4dbaf7}
+  .btn.ghost{background:transparent}
+  .btn:disabled{opacity:0.5;cursor:not-allowed}
+  .notice{padding:10px 12px;border-radius:10px;background:#13202a;border:1px solid #2a3a46;color:#b8d5e8}
+  .warn{padding:10px 12px;border-radius:10px;background:#2a1317;border:1px solid #4a1e25;color:#f2c6cc}
+  .hidden{display:none}
+
+  /* Advanced timings box */
+  .subcard{margin-top:12px;padding:12px;border-radius:14px;background:#11141a;border:1px solid #232833}
+  .subcard summary{cursor:pointer;font-weight:700}
+  .adv-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
+  .kv{display:flex;justify-content:space-between;gap:10px;border-bottom:1px dashed #2a2f38;padding:6px 0}
+  .kv span:first-child{color:#9fb0bf}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace}
+
+  /* Session view (only belief + bottom bar) */
+  .center-card{
+    position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);
+    width:min(1100px,92vw);z-index:3;text-align:center;pointer-events:none;user-select:none;
+  }
+  .center-card.hidden{display:none}
+  .belief{
+    padding:28px 24px;border-radius:16px;background:rgba(20,22,27,0.86);
+    border:1px solid #232833;backdrop-filter: blur(6px);
+    font-size:clamp(28px,5vw,56px);line-height:1.25;font-weight:800;letter-spacing:0.1px;
+    text-shadow: 0 0 0px rgba(154,214,255,0); transition:text-shadow 180ms linear;
+  }
+  .belief.halo-on{ animation: haloPulse 3s ease-in-out infinite }
+  @keyframes haloPulse{
+    0%{   text-shadow: 0 0 0px rgba(154,214,255,0) }
+    50%{  text-shadow: 0 0 18px rgba(154,214,255,0.65) }
+    100%{ text-shadow: 0 0 0px rgba(154,214,255,0) }
+  }
+
+  .bottom-bar{
+    position:fixed;left:50%;bottom:16px;transform:translateX(-50%);
+    z-index:12;display:flex;gap:10px;align-items:center;
+    background:#0f1217;border:1px solid #252a33;border-radius:14px;padding:8px 10px
+  }
+  .status{
+    position:fixed;left:16px;bottom:16px;z-index:12;background:#0f1217;border:1px solid #252a33;border-radius:12px;
+    padding:8px 10px;color:#c9d2dc;font-size:0.9rem
+  }
+  .credit{position:fixed;right:12px;bottom:12px;z-index:2;color:#94a2b4;font-size:0.85rem;opacity:0.9}
+
+  /* Countdown overlay */
+  .timer-overlay{
+    position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:13;
+    pointer-events:none;text-align:center;min-width:260px;max-width:92vw
+  }
+  .timer-box{
+    display:inline-block;background:rgba(15,18,23,0.85);border:1px solid #252a33;border-radius:12px;
+    padding:8px 12px
+  }
+  .phase-line{font-weight:800;font-size:clamp(16px,2.4vw,22px)}
+  .session-line{color:#b5c1ce;font-size:0.9rem;margin-top:2px}
+  .progress{position:relative;height:4px;background:#1a212c;border-radius:6px;margin-top:8px;overflow:hidden}
+  .progress > div{position:absolute;left:0;top:0;height:100%;width:0;background:#8dd3ff}
+</style>
+</head>
+<body>
+<div class="app" id="app">
+  <div class="ring" id="ring"></div>
+  <div class="grain"></div>
+
+  <!-- Pre-session panel -->
+  <div class="panel" id="panel">
+    <div class="card">
+      <h1>Belief Update Session (Theta → Gamma Peripheral Flicker)</h1>
+      <p class="muted">Enter your belief, choose a duration, tweak centre size/contrast/strength, then Start. During the session only the belief remains on screen; the periphery flickers.</p>
+      <div class="grid">
+        <div>
+          <label for="belief">Belief / Statement (edit freely)</label>
+          <textarea id="belief" placeholder="e.g., I meet anxiety with one slow breath and one small action."></textarea>
+
+          <div class="row" style="margin-top:10px">
+            <div style="flex:1">
+              <label for="preset">Session length</label>
+              <select id="preset" aria-label="Session length preset">
+                <option value="5">5 minutes</option>
+                <option value="10" selected>10 minutes</option>
+                <option value="15">15 minutes</option>
+                <option value="custom">Custom</option>
+              </select>
+              <div class="hint">Choose <em>Custom</em> to type your own duration.</div>
+            </div>
+            <div style="flex:1">
+              <label for="customMins">Custom minutes</label>
+              <input id="customMins" type="number" min="2" max="45" step="1" value="12" disabled />
+            </div>
+          </div>
+
+          <div class="row" style="margin-top:8px">
+            <div style="flex:1">
+              <label for="holeSize">Centre size (vmin)</label>
+              <input id="holeSize" type="range" min="12" max="40" step="1" value="18" />
+              <div class="hint">Controls the non-flickering area around the belief.</div>
+            </div>
+            <div style="flex:1">
+              <label for="contrast">Ring contrast</label>
+              <input id="contrast" type="range" min="0.10" max="1.00" step="0.01" value="0.35" />
+            </div>
+          </div>
+
+          <!-- NEW: Flicker strength -->
+          <div class="row" style="margin-top:8px">
+            <div style="flex:1">
+              <label for="strength">Flicker strength (amplitude)</label>
+              <input id="strength" type="range" min="0.50" max="2.00" step="0.05" value="1.00" />
+              <div class="hint">Multiplies the flicker amplitude. Higher = stronger strobe. Start low if you’re sensitive.</div>
+            </div>
+            <div style="flex:1">
+              <label class="row" style="gap:8px;margin-top:22px">
+                <input type="checkbox" id="haloChk" />
+                <span>Gentle text halo (theta only)</span>
+              </label>
+            </div>
+          </div>
+
+          <hr style="border-color:#232833;opacity:0.6;margin:10px 0">
+
+          <!-- Gamma mode and intensity -->
+          <div class="row" style="margin-top:2px">
+            <div style="flex:1">
+              <label for="gammaMode">Gamma mode</label>
+              <select id="gammaMode">
+                <option value="bursts" selected>Bursts (recommended)</option>
+                <option value="continuous">Continuous (best on ≥120 Hz)</option>
+              </select>
+              <div class="hint" id="gammaHint">Bursts resist adaptation and are gentler on 60 Hz screens.</div>
+            </div>
+            <div style="flex:1">
+              <label for="burstIntensity">Burst intensity</label>
+              <input id="burstIntensity" type="range" min="1" max="10" step="1" value="5" />
+              <div class="hint" id="burstHint">Sets burst length & gap: softer ←→ stronger.</div>
+            </div>
+          </div>
+
+          <!-- Countdown toggle -->
+          <div class="row" style="margin-top:8px">
+            <label class="row" style="gap:8px">
+              <input type="checkbox" id="showTimerChk" checked />
+              <span>Show countdown during session</span>
+            </label>
+          </div>
+
+          <div class="row" style="margin-top:10px">
+            <div class="notice" style="flex:1" id="structureNote">
+              <strong>Structure:</strong> Theta → brief rest → Gamma → cool-down. Gamma falls back to 30 Hz on 60 Hz displays.
+            </div>
+          </div>
+
+          <!-- Advanced timings -->
+          <details class="subcard" id="advDetails">
+            <summary>Advanced timings (live preview)</summary>
+            <div id="advContent" class="adv-grid mono"></div>
+          </details>
+
+          <div class="row" style="margin-top:12px">
+            <button class="btn primary" id="startBtn">Start session (Full Screen)</button>
+            <button class="btn" id="testBtn">Test flicker (10s)</button>
+            <button class="btn ghost" id="remeasureBtn">Re-measure refresh rate</button>
+          </div>
+        </div>
+
+        <div>
+          <div class="notice" style="margin-bottom:10px">
+            <strong>Safety:</strong> Avoid if you have photosensitive epilepsy, migraine with visual triggers, or visual disorders. Use in a lit room, ~50–70 cm from screen. Stop if uncomfortable.
+          </div>
+          <div id="hzInfo" class="muted"></div>
+          <div id="fallbackInfo" class="warn hidden" style="margin-top:8px"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Session view -->
+  <div class="center-card hidden" id="centerCard">
+    <div class="belief" id="beliefText">I meet anxiety with one slow breath and one small action.</div>
+  </div>
+
+  <!-- Countdown overlay -->
+  <div class="timer-overlay hidden" id="timerOverlay">
+    <div class="timer-box">
+      <div class="phase-line" id="phaseLine">Theta — 03:00</div>
+      <div class="session-line" id="sessionLine">Session remaining: 10:00</div>
+      <div class="progress"><div id="progressBar"></div></div>
+    </div>
+  </div>
+
+  <!-- Minimal controls during session -->
+  <div class="bottom-bar hidden" id="sessionBar">
+    <button class="btn" id="pauseBtn" disabled>Pause</button>
+    <button class="btn" id="stopBtn" disabled>Stop</button>
+    <button class="btn ghost" id="fsBtn" title="Exit/Enter full screen">Exit Full Screen</button>
+  </div>
+
+  <!-- Live status -->
+  <div class="status" id="status">Idle • Refresh rate: measuring…</div>
+
+  <div class="credit">Designed and Created by <strong>Meaningful Path Therapy (Abdullah Al-Shoaibi)</strong></div>
+</div>
+
+<script>
+(function(){
+  const root = document.documentElement;
+  const appEl = document.getElementById('app');
+  const statusEl = document.getElementById('status');
+  const hzInfo = document.getElementById('hzInfo');
+  const fallbackInfo = document.getElementById('fallbackInfo');
+
+  const panel = document.getElementById('panel');
+  const centerCard = document.getElementById('centerCard');
+  const sessionBar = document.getElementById('sessionBar');
+
+  const beliefInput = document.getElementById('belief');
+  const beliefText = document.getElementById('beliefText');
+
+  const presetSel = document.getElementById('preset');
+  const customMins = document.getElementById('customMins');
+  const contrast = document.getElementById('contrast');
+  const holeSize = document.getElementById('holeSize');
+  const haloChk = document.getElementById('haloChk');
+  const strengthEl = document.getElementById('strength');
+
+  const gammaModeSel = document.getElementById('gammaMode');
+  const burstIntensity = document.getElementById('burstIntensity');
+  const gammaHint = document.getElementById('gammaHint');
+  const burstHint = document.getElementById('burstHint');
+
+  const showTimerChk = document.getElementById('showTimerChk');
+  const timerOverlay = document.getElementById('timerOverlay');
+  const phaseLine = document.getElementById('phaseLine');
+  const sessionLine = document.getElementById('sessionLine');
+  const progressBar = document.getElementById('progressBar');
+
+  const advContent = document.getElementById('advContent');
+
+  const startBtn = document.getElementById('startBtn');
+  const testBtn = document.getElementById('testBtn');
+  const remeasureBtn = document.getElementById('remeasureBtn');
+
+  const pauseBtn = document.getElementById('pauseBtn');
+  const stopBtn = document.getElementById('stopBtn');
+  const fsBtn = document.getElementById('fsBtn');
+
+  let rafId = null;
+  let running = false;
+  let paused = false;
+  let pauseStartedAt = null;
+  let sessionPlan = null;
+  let sessionTotalMs = 0;
+  let sessionStart = 0;
+  let t0 = 0;
+  let phaseStart = 0;
+
+  // Display & gamma
+  let displayHz = null;
+  let useTrue40 = false;
+  let gammaMode = 'bursts';   // 'bursts' | 'continuous'
+  let gammaHz = 30;           // 40 if >=120Hz, else 30
+  let burstLen = 0.5;         // seconds
+  let gapLen = 2.0;           // seconds
+
+  // Other
+  let currentPhaseIndex = -1;
+  let opacity = 0;
+  let haloEnabled = false;
+  let showTimer = true;
+  let strength = 1.0;         // amplitude multiplier 0.5..2.0
+
+  const fmt = (n)=> Math.round(n*10)/10;
+  const setVar = (k,v)=> root.style.setProperty(k, String(v));
+  const clamp01 = (x)=> Math.max(0, Math.min(1, x));
+  const pad2 = (n)=> (n<10?'0':'')+n;
+  function msToMinSec(ms){ const s = Math.max(0, Math.round(ms/1000)); const m = Math.floor(s/60); const r = s % 60; return `${m}:${pad2(r)}`; }
+
+  // ---- Refresh rate detection
+  async function measureHz(samples=120){
+    return new Promise(resolve=>{
+      const times=[]; let last=null;
+      function step(ts){
+        if(last!=null){ times.push(ts-last); }
+        last=ts;
+        if(times.length<samples){ requestAnimationFrame(step); }
+        else{
+          times.sort((a,b)=>a-b);
+          const mid = times[Math.floor(times.length/2)];
+          resolve(1000/mid);
+        }
+      }
+      requestAnimationFrame(step);
+    });
+  }
+  function describeHz(hz){
+    if(!hz) return 'unknown';
+    const common=[60, 90, 100, 120, 144, 165, 240];
+    let nearest=common[0], d=1e9;
+    for(const c of common){ const dd=Math.abs(hz-c); if(dd<d){ d=dd; nearest=c; } }
+    return `${fmt(hz)} Hz (≈${nearest})`;
+  }
+
+  // ---- Planning
+  function planForMinutes(totalMin){
+    const total = totalMin*60*1000;
+    const theta = Math.max(90e3, Math.round(total*0.6));
+    const rest  = Math.max(20e3, Math.round(total*0.1));
+    const gamma = Math.max(60e3, Math.round(total*0.25));
+    const cool  = Math.max(20e3, total - (theta+rest+gamma));
+    return [
+      {name:'Ramp-Up', type:'ramp', duration:10000},
+      {name:'Theta',   type:'theta', duration:theta},
+      {name:'Rest',    type:'rest',  duration:rest},
+      {name:'Gamma',   type:'gamma', duration:gamma},
+      {name:'Cool-Down', type:'cool', duration:Math.max(10000,cool)}
+    ];
+  }
+  function totalDurationMs(plan){ return plan.reduce((a,p)=>a+p.duration,0); }
+
+  // ---- UI helpers
+  function updateBelief(){
+    const v = (beliefInput.value||'').trim();
+    beliefText.textContent = v ? v : 'I meet anxiety with one slow breath and one small action.';
+  }
+  function setContrast(){ setVar('--ring-contrast', parseFloat(contrast.value||'0.35')); }
+  function setHole(){
+    const r = parseInt(holeSize.value,10) || 18;
+    setVar('--hole', r + 'vmin');
+    setVar('--ring-start', `calc(${r}vmin + 12vmin)`);
+  }
+  function setStrength(){ strength = parseFloat(strengthEl.value||'1.0'); }
+  function setStatus(msg){ statusEl.textContent = msg; }
+  function showFallbackNotice(show, reason=''){
+    fallbackInfo.classList.toggle('hidden', !show);
+    if(show){
+      fallbackInfo.innerHTML = `<strong>Gamma fallback active:</strong> ${reason} Using <strong>30 Hz</strong> (clean on 60 Hz screens).`;
+    }
+  }
+  function getSelectedMinutes(){
+    const v = presetSel.value;
+    if(v==='custom'){
+      const n = parseInt(customMins.value,10);
+      return isFinite(n) && n>1 ? n : 12;
+    }
+    return parseInt(v,10);
+  }
+
+  // ---- Gamma controls
+  function mapBurstParams(){
+    const x = Math.min(10, Math.max(1, parseInt(burstIntensity.value||'5',10))); // 1..10
+    // Burst length: 0.25s → 0.9s (softer → stronger)
+    burstLen = 0.25 + (x-1)*(0.65/9);
+    // Gap: 3.0s → 1.2s (softer → stronger)
+    gapLen = 3.0 - (x-1)*(1.8/9);
+    burstHint.textContent = `Burst ≈ ${Math.round(burstLen*1000)} ms, gap ≈ ${fmt(gapLen)} s.`;
+  }
+  function applyGammaModeUI(){
+    gammaMode = gammaModeSel.value;
+    burstIntensity.disabled = (gammaMode==='continuous');
+    gammaHint.textContent = gammaMode==='continuous'
+      ? 'Continuous gamma is smoother on ≥120 Hz displays; on 60 Hz it runs at 30 Hz.'
+      : 'Bursts resist adaptation and are gentler on 60 Hz screens.';
+  }
+
+  // ---- Advanced timings preview
+  function updateAdvancedPreview(){
+    const mins = getSelectedMinutes();
+    const plan = planForMinutes(mins);
+    const gammaPart = plan.find(p=>p.type==='gamma');
+    const _gammaHz = useTrue40 ? 40 : 30;
+
+    let burstInfo = '';
+    if(gammaMode==='continuous'){
+      burstInfo = `Continuous at ${_gammaHz} Hz`;
+    } else {
+      const burstsApprox = Math.max(1, Math.floor((gammaPart.duration/1000) / (burstLen + gapLen)));
+      burstInfo = `Bursts @ ${_gammaHz} Hz • ~${burstsApprox} bursts • ${Math.round(burstLen*1000)} ms on / ${fmt(gapLen)} s off`;
+    }
+
+    const effAmp = Math.min(1, strength * parseFloat(contrast.value||'0.35'));
+    const html = `
+      <div class="kv"><span>Total planned length</span><span>${msToMinSec(totalDurationMs(plan))}</span></div>
+      <div class="kv"><span>Ramp-up</span><span>${msToMinSec(plan[0].duration)}</span></div>
+      <div class="kv"><span>Theta</span><span>${msToMinSec(plan[1].duration)}</span></div>
+      <div class="kv"><span>Rest</span><span>${msToMinSec(plan[2].duration)}</span></div>
+      <div class="kv"><span>Gamma</span><span>${msToMinSec(plan[3].duration)}</span></div>
+      <div class="kv"><span>Cool-down</span><span>${msToMinSec(plan[4].duration)}</span></div>
+
+      <div class="kv"><span>Display refresh</span><span>${displayHz?describeHz(displayHz):'measuring…'}</span></div>
+      <div class="kv"><span>Gamma mode</span><span>${burstInfo}</span></div>
+      <div class="kv"><span>Centre size</span><span>${holeSize.value} vmin</span></div>
+      <div class="kv"><span>Ring contrast</span><span>${contrast.value}</span></div>
+      <div class="kv"><span>Flicker strength</span><span>${strength.toFixed(2)}× (effective amp ≈ ${(effAmp*100|0)}%)</span></div>
+      <div class="kv"><span>Text halo (theta)</span><span>${haloChk.checked?'On':'Off'}</span></div>
+      <div class="kv"><span>Countdown</span><span>${showTimerChk.checked?'Shown':'Hidden'}</span></div>
+    `;
+    advContent.innerHTML = html;
+  }
+
+  // ---- Fullscreen
+  async function enterFullscreen(){
+    try{
+      if(document.fullscreenElement) return;
+      await (appEl.requestFullscreen ? appEl.requestFullscreen() : document.documentElement.requestFullscreen());
+    }catch(e){ console.warn('Fullscreen request blocked:', e); }
+    fsBtn.textContent = 'Exit Full Screen';
+  }
+  async function exitFullscreen(){
+    try{ if(document.fullscreenElement) await document.exitFullscreen(); }catch(e){ console.warn(e); }
+    fsBtn.textContent = 'Enter Full Screen';
+  }
+  fsBtn.addEventListener('click', ()=>{
+    if(document.fullscreenElement){ exitFullscreen(); } else { enterFullscreen(); }
+  });
+  document.addEventListener('fullscreenchange', ()=>{
+    fsBtn.textContent = document.fullscreenElement ? 'Exit Full Screen' : 'Enter Full Screen';
+  });
+
+  // ---- Countdown helpers
+  function phaseLabel(p){
+    return p.type==='theta' ? 'Theta'
+         : p.type==='rest' ? 'Rest'
+         : p.type==='gamma'? 'Gamma'
+         : p.type==='cool' ? 'Cool-down'
+         : 'Ramp-up';
+  }
+  function remainingSessionMs(idx, elapsedInPhase){
+    if(!sessionPlan) return 0;
+    let rem = Math.max(0, sessionPlan[idx].duration - elapsedInPhase);
+    for(let i=idx+1;i<sessionPlan.length;i++){ rem += sessionPlan[i].duration; }
+    return rem;
+  }
+  function updateTimerUI(now){
+    if(!showTimer || !running) return;
+    const phase = sessionPlan[currentPhaseIndex];
+    const elapsedInPhase = now - phaseStart;
+    const phaseRem = Math.max(0, phase.duration - elapsedInPhase);
+    const totalElapsed = now - sessionStart;
+    const totalRem = Math.max(0, sessionTotalMs - totalElapsed);
+
+    phaseLine.textContent = `${phaseLabel(phase)} — ${msToMinSec(phaseRem)}`;
+    sessionLine.textContent = `Session remaining: ${msToMinSec(totalRem)}`;
+    const pct = Math.max(0, Math.min(1, totalElapsed / sessionTotalMs));
+    progressBar.style.width = (pct*100).toFixed(2) + '%';
+  }
+
+  // ---- Animation loop
+  function runLoop(){
+    const now = performance.now();
+    if(!t0) t0 = now;
+    const elapsed = now - phaseStart;
+
+    const phase = sessionPlan[currentPhaseIndex];
+    const totalPhase = phase.duration;
+
+    // Soft edges for all phases
+    const edge = Math.min(1000, totalPhase*0.06);
+    const inRamp = Math.min(1, (now - phaseStart)/edge);
+    const outRamp = Math.min(1, (totalPhase - elapsed)/edge);
+    const edgeGain = Math.min(inRamp, outRamp);
+
+    let o = 0;
+    const thetaHz = 6.5;
+    const timeSec = (now - t0)/1000;
+
+    if(phase.type==='theta'){
+      o = 0.5 + 0.5*Math.sin(2*Math.PI*thetaHz*timeSec);
+      beliefText.classList.toggle('halo-on', haloEnabled);
+    } else if(phase.type==='gamma'){
+      beliefText.classList.remove('halo-on');
+      if(gammaMode==='continuous'){
+        o = 0.5 + 0.5*Math.sin(2*Math.PI*(gammaHz)*timeSec);
+      } else {
+        const cycle = burstLen + gapLen;
+        const pos = (timeSec % cycle);
+        if(pos < burstLen){
+          o = 0.5 + 0.5*Math.sin(2*Math.PI*(gammaHz)*timeSec);
+        } else {
+          o = 0;
+        }
+      }
+    } else {
+      beliefText.classList.remove('halo-on');
+      // Calm ambience (very slow shimmer) during rest/cool/ramp
+      o = 0.15*(0.5 + 0.5*Math.sin(2*Math.PI*0.2*timeSec));
+    }
+
+    const target = o * edgeGain;
+    opacity = opacity*0.85 + target*0.15;
+
+    // Apply amplitude multiplier; clamp to [0..1]
+    const effective = clamp01(opacity * strength);
+    root.style.setProperty('--ring-opacity', effective.toFixed(3));
+
+    // Update countdown UI
+    updateTimerUI(now);
+
+    // Phase switching
+    if(elapsed >= totalPhase){
+      currentPhaseIndex++;
+      if(currentPhaseIndex >= sessionPlan.length){
+        finishSession('Session complete');
+        return;
+      } else {
+        phaseStart = now;
+        announcePhase();
+      }
+    }
+
+    if(running && !paused){ rafId = requestAnimationFrame(runLoop); }
+  }
+
+  function announcePhase(){
+    const phase = sessionPlan[currentPhaseIndex];
+    const hzStr = describeHz(displayHz);
+    gammaHz = useTrue40 ? 40 : 30; // ensure label matches auto
+    const modeStr = gammaMode==='continuous' ? `Continuous ${gammaHz} Hz` : `Bursts @ ${gammaHz} Hz`;
+    const label = phaseLabel(phase);
+    setStatus(`${label} • ${fmt(phase.duration/1000)}s • ${hzStr}`);
+  }
+
+  function startSession(){
+    if(running) return;
+    updateBelief();
+    setContrast();
+    setHole();
+    setStrength();
+    haloEnabled = !!haloChk.checked;
+    applyGammaModeUI();
+    mapBurstParams();
+    gammaHz = useTrue40 ? 40 : 30;
+    showTimer = !!showTimerChk.checked;
+
+    const mins = getSelectedMinutes();
+    sessionPlan = planForMinutes(mins);
+    sessionTotalMs = totalDurationMs(sessionPlan);
+
+    panel.classList.add('hidden');
+    centerCard.classList.remove('hidden');
+    sessionBar.classList.remove('hidden');
+    timerOverlay.classList.toggle('hidden', !showTimer);
+
+    // Full screen + start clocks
+    enterFullscreen();
+    running = true; paused=false; t0=0; currentPhaseIndex=0; phaseStart=performance.now();
+    sessionStart = phaseStart;
+
+    pauseBtn.disabled = false; stopBtn.disabled = false;
+    announcePhase();
+
+    cancelAnimationFrame(rafId);
+    rafId = requestAnimationFrame(runLoop);
+  }
+
+  function testFlicker(){
+    if(running) return;
+    updateBelief(); setContrast(); setHole(); setStrength();
+    haloEnabled = !!haloChk.checked;
+    applyGammaModeUI(); mapBurstParams();
+    gammaHz = useTrue40 ? 40 : 30;
+    showTimer = !!showTimerChk.checked;
+
+    panel.classList.add('hidden'); centerCard.classList.remove('hidden'); sessionBar.classList.remove('hidden');
+    timerOverlay.classList.toggle('hidden', !showTimer);
+
+    sessionPlan = [
+      {name:'Ramp-Up', type:'ramp', duration:800},
+      {name:'Theta',   type:'theta', duration:2000},
+      {name:'Rest',    type:'rest',  duration:800},
+      {name:'Gamma',   type:'gamma', duration:2200},
+      {name:'Cool-Down', type:'cool', duration:2400}
+    ];
+    sessionTotalMs = totalDurationMs(sessionPlan);
+    running = true; paused=false; t0=0; currentPhaseIndex=0; phaseStart=performance.now();
+    sessionStart = phaseStart;
+
+    pauseBtn.disabled = false; stopBtn.disabled = false;
+    announcePhase();
+    cancelAnimationFrame(rafId); rafId = requestAnimationFrame(runLoop);
+  }
+
+  function pauseSession(){
+    if(!running) return;
+    paused = !paused;
+    if(paused){
+      setStatus('Paused');
+      pauseBtn.textContent='Resume';
+      pauseStartedAt = performance.now();
+      cancelAnimationFrame(rafId);
+    } else {
+      setStatus('Resumed');
+      // Shift sessionStart by pause duration so the total remaining stays accurate
+      if(pauseStartedAt){ sessionStart += (performance.now() - pauseStartedAt); pauseStartedAt = null; }
+      // Keep phase timing continuous
+      phaseStart = performance.now() - Math.min(sessionPlan[currentPhaseIndex].duration - 1, performance.now() - phaseStart);
+      t0 = performance.now();
+      rafId = requestAnimationFrame(runLoop);
+      pauseBtn.textContent='Pause';
+    }
+  }
+
+  function finishSession(reason){
+    running = false; paused=false; pauseStartedAt = null;
+    cancelAnimationFrame(rafId);
+    root.style.setProperty('--ring-opacity', 0);
+    beliefText.classList.remove('halo-on');
+    pauseBtn.disabled = true; stopBtn.disabled = true;
+    setStatus(`${reason} • Refresh rate: ${describeHz(displayHz)} • Gamma: ${useTrue40 ? '40 Hz' : '30 Hz'} • Mode: ${gammaMode}`);
+
+    timerOverlay.classList.add('hidden');
+    exitFullscreen();
+    centerCard.classList.add('hidden');
+    sessionBar.classList.add('hidden');
+    panel.classList.remove('hidden');
+  }
+  function stopSession(){ finishSession('Stopped'); }
+
+  // ---- Wiring
+  document.addEventListener('visibilitychange', ()=>{ if(document.hidden && running && !paused){ pauseSession(); }});
+  beliefInput.addEventListener('input', ()=>{ updateBelief(); updateAdvancedPreview(); });
+  contrast.addEventListener('input', ()=>{ setContrast(); updateAdvancedPreview(); });
+  holeSize.addEventListener('input', ()=>{ setHole(); updateAdvancedPreview(); });
+  strengthEl.addEventListener('input', ()=>{ setStrength(); updateAdvancedPreview(); });
+  haloChk.addEventListener('change', updateAdvancedPreview);
+  showTimerChk.addEventListener('change', updateAdvancedPreview);
+
+  gammaModeSel.addEventListener('change', ()=>{ applyGammaModeUI(); updateAdvancedPreview(); });
+  burstIntensity.addEventListener('input', ()=>{ mapBurstParams(); updateAdvancedPreview(); });
+
+  presetSel.addEventListener('change', ()=>{ customMins.disabled = (presetSel.value!=='custom'); updateAdvancedPreview(); });
+  customMins.addEventListener('input', updateAdvancedPreview);
+
+  startBtn.addEventListener('click', startSession);
+  testBtn.addEventListener('click', testFlicker);
+  remeasureBtn.addEventListener('click', initHz);
+  pauseBtn.addEventListener('click', pauseSession);
+  stopBtn.addEventListener('click', stopSession);
+
+  // Keyboard shortcuts
+  document.addEventListener('keydown', (e)=>{
+    if(!running) return;
+    if(e.code==='Space'){ e.preventDefault(); pauseSession(); }
+    if(e.key==='Escape'){ e.preventDefault(); stopSession(); }
+  });
+
+  // ---- Init
+  async function initHz(){
+    setStatus('Idle • Refresh rate: measuring…');
+    const hz = await measureHz();
+    displayHz = hz;
+    useTrue40 = displayHz >= 110;
+    hzInfo.textContent = `Measured refresh rate: ${describeHz(displayHz)}`;
+    showFallbackNotice(!useTrue40, useTrue40 ? '' : 'Display ≈60 Hz.');
+    setStatus(`Idle • Refresh rate: ${describeHz(displayHz)} • Gamma base: ${useTrue40 ? '40 Hz' : '30 Hz'} (auto)`);
+    updateAdvancedPreview();
+  }
+
+  // Defaults
+  beliefInput.value = 'I meet anxiety with one slow breath and one small action.';
+  updateBelief(); setContrast(); setHole(); setStrength(); applyGammaModeUI(); mapBurstParams();
+  updateAdvancedPreview();
+  initHz();
+})();
+</script>
+</body>
+</html>
